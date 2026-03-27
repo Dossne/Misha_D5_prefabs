@@ -14,9 +14,111 @@ The workflow below is designed to reproduce the exact kind of result we converge
 
 **Important:** the companion master prompt must explicitly instruct the AI agent to read this `.md` file completely before starting. This markdown file is the authoritative specification.
 
-**Important:** if the user did not attach a screenshot in the initial request, the agent must first ask the user to attach the screenshot and wait for it. The agent must not begin structural analysis, cleanup suggestions, or prefab extraction before the screenshot is available.
-
 ---
+
+
+
+## Anchor, stretch, offset, and position analysis
+
+Before the structure is finalized, the agent must analyze the **probable anchoring/adaptivity behavior** of visible elements relative to their parent.
+
+The goal is to detect elements that are likely:
+- stretched to parent edges,
+- anchored to one or more parent sides,
+- positioned with fixed offsets from parent sides,
+- or positioned as fixed elements using their rectangle center.
+
+### What to detect
+
+For each visible element, estimate whether there is strong evidence that it behaves as one of these patterns:
+
+1. **Fully stretched to parent bounds**
+   - left, right, top, and bottom are attached to the parent,
+   - one or more sides may have offsets,
+   - typical for scroll/content areas, fullscreen panels, backgrounds.
+
+2. **Horizontally stretched with fixed height**
+   - left and right attached to parent,
+   - height is likely constant,
+   - top or bottom may be anchored with offset,
+   - typical for headers, section bars, wide buttons, row containers.
+
+3. **Vertically stretched with fixed width**
+   - top and bottom attached to parent,
+   - width is likely constant.
+
+4. **Corner-anchored or side-anchored fixed-size element**
+   - attached to one or more parent sides,
+   - size likely fixed,
+   - examples: close buttons, lock badges, alert markers, discount ribbons.
+
+5. **Fixed-position element**
+   - no strong evidence of side anchoring/stretching,
+   - should keep an explicit position instead.
+
+### Confidence and confirmation
+
+If the agent finds **clear evidence** that an element is stretched or anchored to parent sides, it must:
+- include that information in the analysis result,
+- include the probable side anchors,
+- include the probable offsets to those anchored sides,
+- mark the element as **needs anchor confirmation**.
+
+Before locking the final structure, the agent must ask the user to confirm each such detected anchored/stretch element.
+
+For example:
+- confirm that `ScrollArea` is stretched left/right/bottom and top-offset under `TopBar`,
+- confirm that `CoinsSectionHeader` is stretched left/right with fixed height,
+- confirm that `TopBar` is stretched left/right/top with fixed height.
+
+If the user confirms such an element, keep:
+- its confirmed anchors,
+- its confirmed offsets,
+- its likely fixed size on non-stretched axes.
+
+If the user does **not** confirm anchors for an element, do **not** keep unconfirmed anchor metadata as final.
+
+### Position fallback rule
+
+For every visible element that does **not** end up with confirmed parent-side anchors in the final result, the structure must store its position as the **center of the rectangle occupied by that element** in the chosen **reference resolution**.
+
+This position is required for:
+- fixed-position UI elements,
+- world elements,
+- decorative elements,
+- any element whose stretch/anchor behavior was not confirmed.
+
+### Data to store
+
+For visible elements, the final analysis should store:
+
+- **Size** at reference resolution:
+  - `Size: WIDTH x HEIGHT px @ REF_WIDTH x REF_HEIGHT`
+
+And additionally either:
+
+- **confirmed anchors + offsets**, if confirmed:
+  - `Anchors: Left, Right, Top`
+  - `Offsets: L=0, R=0, T=0`
+  - optional fixed axis size when relevant:
+    - `FixedHeight: 132 px`
+    - `FixedWidth: 64 px`
+
+or
+
+- **fixed position**, if anchors are not confirmed:
+  - `Position: CX x CY px @ REF_WIDTH x REF_HEIGHT`
+
+### Output rule
+
+All visible nodes in the final structure should include:
+- size information,
+- and either:
+  - confirmed anchor/offset information,
+  - or fixed center position information.
+
+Purely logical non-visual wrapper nodes may omit size and position/anchor metadata.
+
 
 ## Input assumptions
 
@@ -30,21 +132,6 @@ The workflow below is designed to reproduce the exact kind of result we converge
   - **hierarchical movement logic**.
 
 ---
-
-## Screenshot availability precondition
-
-Before any structural work begins, the agent must verify that a screenshot is actually present in the request.
-
-Rules:
-- If the screenshot is attached, proceed normally.
-- If the screenshot is not attached, the agent must ask the user to attach it.
-- Until the screenshot is attached, the agent must not produce:
-  - the initial structure,
-  - the cleanup candidate list,
-  - the final structure,
-  - the prefab list.
-
-Once the screenshot is attached, continue with the normal workflow.
 
 ## Core rules
 
@@ -191,8 +278,14 @@ A single full tree of the screen.
 Each node must use this format:
 
 ```text
-NodeName (Component1, Component2, ...) [ScriptName {Type : fieldName, Type : fieldName, ...}]
+NodeName (Component1, Component2, ...) {Size: WIDTH x HEIGHT px @ REF_WIDTH x REF_HEIGHT; Anchors: Left, Right; Offsets: L=16, R=16; FixedHeight: 132 px; Position: CX x CY px @ REF_WIDTH x REF_HEIGHT} [ScriptName {Type : fieldName, Type : fieldName, ...}]
 ```
+
+Use only the metadata that applies to the node:
+- visible nodes must include `Size`,
+- if anchors are confirmed, include anchor/offset metadata and any relevant fixed axis size,
+- if anchors are not confirmed, include `Position` instead,
+- purely logical wrapper nodes may omit the `{...}` block.
 
 Rules:
 - `()` is required for the node's Unity components.
@@ -242,7 +335,10 @@ From the screenshot, build an initial hierarchical breakdown that:
 - preserves visual layering,
 - preserves hierarchical movement logic,
 - keeps independent branches independent,
-- avoids flattening multi-layer elements.
+- avoids flattening multi-layer elements,
+- estimates visible element sizes at reference resolution,
+- detects probable stretch/anchor behavior where the evidence is strong,
+- records fixed center positions for visible elements that do not yet have confirmed anchors.
 
 ### Stage 2 — Add Unity components
 
@@ -267,7 +363,27 @@ Rules:
 - Immediate child scripts only.
 - If a child script exists and is the logical boundary, the parent should reference that script rather than deeper visuals.
 
-### Stage 4 — Dialog stage for excluding unnecessary entities
+### Stage 4 — Dialog stage for anchor/stretch confirmation
+
+Before cleanup, the agent must present the list of elements for which stretch/anchor behavior was confidently detected and ask the user to confirm them.
+
+For each such candidate, the agent should state:
+- the element name,
+- the exact single structure line for that element only,
+- the probable anchored sides,
+- the probable offsets,
+- whether width or height appears fixed.
+
+Rules for the structure-line preview:
+- include only the line of the element itself,
+- do not include parent lines,
+- do not include child lines,
+- keep the same formatting style as the final structure format,
+- the goal is to make clear exactly which element is being confirmed.
+
+Only confirmed anchors/offsets may remain in the final result.
+
+### Stage 5 — Dialog stage for excluding unnecessary entities
 
 This stage is mandatory.
 
@@ -277,10 +393,22 @@ The list must be concise and formatted like this:
 
 ```text
 1 : ElementName / ElementName : scripts
+   - Structure line: ElementName (Component1, Component2, ...) {...} [ScriptName {...}]
 2 : ElementName : script
+   - Structure line: ElementName (Component1, Component2, ...) {...} [ScriptName {...}]
 3 : Shadow-elements : references
+   - Structure line: ElementName (Component1, Component2, ...) {...}
 4 : Mask-elements : references
+   - Structure line: ElementName (Component1, Component2, ...) {...}
 ```
+
+Rules for the structure-line preview in the cleanup stage:
+- for each numbered item, print the exact single structure line for each concrete element that the user is expected to evaluate,
+- print only the element line itself,
+- do not print parent lines,
+- do not print child lines,
+- preserve the final structure formatting style,
+- if several same-meaning elements are grouped into one item, show one structure line per concrete representative that the user may want to confirm/remove.
 
 Rules:
 - Group identical same-meaning candidates from different branches into one item.
@@ -299,7 +427,7 @@ The user should be able to answer with keep/remove instructions, for example:
 
 or with plus notation if desired.
 
-### Stage 5 — Cleanup pass after user selection
+### Stage 6 — Cleanup pass after user selection
 
 After the user marks what to keep/remove:
 - remove the unwanted scripts and references,
@@ -308,11 +436,11 @@ After the user marks what to keep/remove:
 - keep hierarchy and draw order intact,
 - keep movement logic intact.
 
-### Stage 6 — Finalize repeated references
+### Stage 7 — Finalize repeated references
 
 Convert repeated same-type references to `List<Type>{ ... }` in the final structure.
 
-### Stage 7 — Extract prefabs bottom-up
+### Stage 8 — Extract prefabs bottom-up
 
 Identify reusable and composition prefabs starting from the leafiest valid reusable structures and move upward.
 
@@ -343,6 +471,13 @@ Before presenting the final result, verify all of the following:
 - Prefabs are extracted bottom-up.
 - Higher composed trees use `<PrefabType>Parent` / `<PrefabType>List` wrapper nodes instead of bare prefab placeholders.
 - Parent scripts serialize wrapper transforms immediately before prefab or prefab-list fields.
+- Visible nodes include size info at reference resolution.
+- Visible nodes have either confirmed anchor/offset metadata or a fixed center position at reference resolution.
+- Unconfirmed anchors are not left in the final structure.
+
+- Anchor/stretch confirmation items include the exact single structure line for each element being confirmed.
+- Cleanup candidates include the exact single structure line for each element being reviewed.
+
 
 ---
 

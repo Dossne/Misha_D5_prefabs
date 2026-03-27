@@ -1,19 +1,20 @@
-# Prefab Generator Authoring Guide (Universal)
+﻿# Prefab Generator Authoring Guide (Universal)
 
 ## Purpose
 This guide defines a reusable workflow for generating a **complete Unity prefab-generation package** from an input specification that describes:
 - final hierarchy tree;
 - per-prefab hierarchy list;
 - component list per node;
-- serialized links for view classes.
+- serialized links for view classes;
+- optional UI layout metadata such as reference resolution, size, anchors, offsets, and position.
 
 The result must be a ready-to-run package inside a chosen workspace folder (for example `Assets/TestPrefabGenerator`) that includes:
 - one class per file for all required view/runtime classes;
 - ScriptableObject-based generator profile;
 - Custom Inspector button `Generate`;
 - editor-only generation pipeline;
-- optional batch entry point for automated generation;
-- generated prefab assets (if Unity generation run is possible in the current environment).
+- optional batch entry point;
+- generated prefab assets after manual generation run.
 
 ---
 
@@ -60,9 +61,22 @@ The result must be a ready-to-run package inside a chosen workspace folder (for 
 - Use `TextMeshProUGUI` for player-facing UI texts.
 - If `Assets/Font/bangerscyrillic SDF.asset` exists, assign it where text is created in generation logic.
 
-6. **Prefab completeness rule**
-- Prefab hierarchies must be fully created according to input.
-- All serialized fields declared by view classes must be assigned in generator code.
+6. **RectTransform metadata rule**
+- If the input includes reference-resolution layout metadata for visible UI nodes, the generator must parse and apply it to `RectTransform`.
+- This metadata is authoritative for UI layout unless the user explicitly overrides it.
+- The generator must not leave UI nodes at generic default `RectTransform` values when concrete metadata exists in the input.
+
+7. **Nested-prefab composition rule**
+- If input defines prefab descriptions for nested structures (where one described structure is contained inside another), generation must be ordered from inner to outer.
+- The child (nested) prefab must be generated first.
+- Parent prefab generation must use the generated child prefab instance/reference, not a duplicated manual rebuild of the same subtree.
+- This rule applies recursively for multi-level nesting.
+- When a parent prefab instance already contains structural placeholder nodes from the nested prefab template (for example `*PrefabList` or `*PrefabParent`), those placeholders are part of the contract and must be preserved.
+- Do not delete or replace `*PrefabList` nodes inside nested prefab instances. Any generated `*Prefab` children that correspond to that list must be parented under the existing `*PrefabList` node.
+- Do not delete or replace `*PrefabParent` nodes inside nested prefab instances.
+- If a `*PrefabParent` already contains the corresponding nested `*Prefab` instance, do not create a second instance. Reuse the existing nested instance and wire references to it.
+- Creating a new nested `*Prefab` instance is allowed only when the required corresponding instance does not already exist under the expected `*PrefabParent`.
+- Name customization and layout application for reused nested instances are allowed, but they must not break prefab-instance linkage or remove required template nodes.
 
 ---
 
@@ -73,11 +87,11 @@ Use this pattern under `<WORKSPACE_ROOT>`:
 - `<WORKSPACE_ROOT>/<FeatureA>/Scripts/*.cs`
 - `<WORKSPACE_ROOT>/<FeatureB>/Scripts/*.cs`
 - ...
-- `<WORKSPACE_ROOT>/Generator/Scripts/PrefabGenerationProfile.cs`
-- `<WORKSPACE_ROOT>/Generator/Editor/PrefabGenerationPipeline.cs`
-- `<WORKSPACE_ROOT>/Generator/Editor/PrefabGenerationProfileEditor.cs`
-- `<WORKSPACE_ROOT>/Generator/Editor/PrefabGenerationBatchRunner.cs` (optional but recommended)
-- `<WORKSPACE_ROOT>/Generator/Asset/PrefabGenerationProfile.asset`
+- `<WORKSPACE_ROOT>/_Generator/Scripts/PrefabGenerationProfile.cs`
+- `<WORKSPACE_ROOT>/_Generator/Editor/PrefabGenerationPipeline.cs`
+- `<WORKSPACE_ROOT>/_Generator/Editor/PrefabGenerationProfileEditor.cs`
+- `<WORKSPACE_ROOT>/_Generator/Editor/PrefabGenerationBatchRunner.cs` (optional but recommended)
+- `<WORKSPACE_ROOT>/_Generator/Asset/PrefabGenerationProfile.asset`
 
 And generated prefabs saved into corresponding feature folders:
 - `<WORKSPACE_ROOT>/<FeatureX>/<PrefabName>.prefab`
@@ -86,12 +100,12 @@ And generated prefabs saved into corresponding feature folders:
 
 ## Runtime and editor separation
 
-### Runtime (`Generator/Scripts`)
+### Runtime (`_Generator/Scripts`)
 - `PrefabGenerationProfile : ScriptableObject`
   - stores only config data (for example `rootPath`).
   - no direct usage of `UnityEditor` APIs.
 
-### Editor (`Generator/Editor`)
+### Editor (`_Generator/Editor`)
 - `PrefabGenerationPipeline`:
   - receives `PrefabGenerationProfile`;
   - builds all object trees;
@@ -110,17 +124,76 @@ And generated prefabs saved into corresponding feature folders:
 Given user input with a hierarchy schema:
 
 1. Parse all mentioned classes/components/serialized fields.
-2. Build a model:
+2. Parse UI layout metadata when present:
+- `Size: WIDTH x HEIGHT px @ REF_WIDTH x REF_HEIGHT`
+- `Anchors: ...`
+- `Offsets: ...`
+- `FixedWidth: ... px`
+- `FixedHeight: ... px`
+- `Position: CX x CY px @ REF_WIDTH x REF_HEIGHT`
+3. Build a model:
 - Nodes (`name`, `components`, `children`)
 - View binding requirements (`Class -> fields -> target node/component`)
 - Reusable prefab definitions.
-3. Emit script plan:
+- Layout metadata for each `RectTransform` node when present:
+  - reference resolution
+  - anchors
+  - offsets
+  - fixed axis sizes
+  - position fallback
+4. Emit script plan:
 - one file per class;
 - split by folder domain.
-4. Emit generation plan:
+5. Emit generation plan:
 - helper builders for reusable subtrees;
 - top-level builders for each prefab;
 - final save paths per prefab.
+
+---
+
+## RectTransform metadata handling
+
+For UI nodes, metadata from the input must drive concrete `RectTransform` setup in generated prefabs.
+
+### Supported metadata
+
+- `Size: WIDTH x HEIGHT px @ REF_WIDTH x REF_HEIGHT`
+- `Anchors: Left, Right, Top, Bottom, CenterX, CenterY` or equivalent side-based combinations
+- `Offsets: L=..., R=..., T=..., B=...`
+- `FixedWidth: ... px`
+- `FixedHeight: ... px`
+- `Position: CX x CY px @ REF_WIDTH x REF_HEIGHT`
+
+### Application rules
+
+1. If anchors are present:
+- Convert them into `anchorMin` and `anchorMax`.
+- Apply side offsets through `offsetMin` and `offsetMax`.
+- On stretched axes, prefer offsets over raw `sizeDelta`.
+- On non-stretched axes, apply `Size`, `FixedWidth`, and `FixedHeight` through `sizeDelta`.
+
+2. If anchors are absent but `Position` is present:
+- Treat the element as fixed-position.
+- Set a non-stretched anchor preset consistent with the metadata.
+- Apply `anchoredPosition` from the provided center position in the stated reference resolution.
+- Apply `sizeDelta` from `Size`.
+
+3. If both stretch metadata and fixed-axis metadata exist:
+- Keep offsets on stretched axes.
+- Keep fixed size on non-stretched axes.
+
+4. If metadata is partial:
+- Use only explicitly provided values.
+- Fall back to stable defaults for unspecified `RectTransform` fields.
+- Do not invent exact offsets or coordinates that are not present in the input.
+
+5. Reference resolution consistency:
+- Treat `@ REF_WIDTH x REF_HEIGHT` as the coordinate space for all values tied to that node set.
+- Do not silently mix multiple reference resolutions in one generated layout interpretation.
+
+### Generation expectation
+
+The generator should contain explicit helper logic for applying parsed layout metadata to `RectTransform` instances, instead of relying only on generic centered defaults.
 
 ---
 
@@ -147,6 +220,7 @@ In pipeline code define helpers:
 - `CreateUiNode(name, parent, extraComponents...)`
 - `CreateWorldNode(name, parent, addSortingGroup)`
 - `CreateEmptyNode(name, parent)`
+- `ApplyRectTransformLayout(rectTransform, layoutMetadata)`
 - `SavePrefab(root, path)`
 - `EnsureFolder(path)`
 - `ApplyPreferredTmpFont(text)`
@@ -166,6 +240,7 @@ Before finalizing output:
 2. Completeness
 - Every requested prefab has a generator function.
 - Every requested serialized field is assigned.
+- Every provided `RectTransform` metadata block is either applied or explicitly reported as unsupported.
 
 3. Structure
 - One class per file.
@@ -175,8 +250,8 @@ Before finalizing output:
 - Prefabs saved into intended folders under workspace root.
 
 5. Execution
-- If environment allows, run generation automatically.
-- If not possible, report that explicitly and provide manual run steps.
+- Do not run generation from the agent.
+- Provide exact manual run steps.
 
 ---
 
@@ -186,8 +261,8 @@ When completing a task from this guide, the agent should output:
 
 1. What was created.
 2. Absolute paths of key files.
-3. Whether generation was auto-run.
-4. If auto-run failed/unavailable, exact manual steps:
+3. Whether generation was executed.
+4. Exact manual steps:
 - open profile asset;
 - press `Generate`.
 5. Any unverified points.
@@ -200,3 +275,4 @@ When completing a task from this guide, the agent should output:
 - Keep logic data-driven where possible (builders reused by multiple prefabs).
 - Do not modify unrelated project files.
 - Keep diffs localized to workspace root.
+

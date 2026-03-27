@@ -1,7 +1,7 @@
-# Universal Prompt Template For Prefab-Generator Agent
+﻿# Universal Prompt Template For Prefab-Generator Agent
 
 Read and follow this guide first:
-`Assets/TestPrefabGenerator/Generator/Docs/PrefabGeneratorAuthoringGuide.md`
+`Assets/TestPrefabGenerator/_Generator/Docs/PrefabGeneratorAuthoringGuide.md`
 
 Only after reading it, execute the task below.
 
@@ -24,25 +24,30 @@ Build a complete Unity prefab-generation package from the input specification I 
   - object name
   - components
   - view class and serialized-field bindings (if any)
+  - optional UI layout metadata: reference resolution, size, anchors, offsets, fixed axis sizes, and/or position
 
 ## Required behavior
 1. Work only inside the provided workspace root folder.
 2. Create one `.cs` file per class.
 3. Place scripts in per-prefab/domain folders.
-4. Place generator scripts and generator asset in a separate `Generator` folder.
-5. Implement generator as:
+4. Place generator scripts and generator asset in a separate `_Generator` folder.
+5. Agent must create the generation profile `.asset` file directly in the target `_Generator/Asset` folder as part of file generation (including valid `.meta` when needed). Do not require creating this asset via Unity menu actions (for example `Assets/Create`).
+6. Implement generator as:
 - `ScriptableObject` profile (runtime-safe)
 - custom inspector button `Generate`
 - editor generation pipeline that creates all prefabs and assigns all serialized references
-6. Keep runtime/editor assembly separation correct (no runtime references to editor classes).
-7. If possible, run generation automatically after writing files.
-8. If automatic run is not possible, explicitly report this and provide manual run steps.
+7. Keep runtime/editor assembly separation correct (no runtime references to editor classes).
+8. Do not run generation from the agent. Always provide manual run steps.
+9. If the input contains prefab descriptions for nested structures, generate child prefabs first and use those generated prefabs inside parent prefab generation (no manual subtree duplication).
+10. If the input contains UI layout metadata for `RectTransform` nodes, parse and apply it during prefab generation.
+11. Use size, anchors, offsets, fixed axis sizes, and position metadata to configure `RectTransform` values instead of leaving UI nodes at generic defaults.
+12. When anchors/offsets are provided, prefer them for stretched axes; when only fixed position is provided, use it to set `anchoredPosition` and `sizeDelta`.
 
 ## Required deliverables
 - Full set of source files for views/runtime classes.
 - Full set of generator files.
 - Generation profile `.asset`.
-- Prefabs generated to corresponding folders (when generation run is possible).
+- Prefabs generated to corresponding folders after manual run.
 - Final report with:
   - created/changed files;
   - whether generation was executed;
@@ -53,3 +58,5 @@ Build a complete Unity prefab-generation package from the input specification I 
 - All serialized fields wired.
 - No extra dependencies outside workspace root.
 - Clean, minimal, deterministic code.
+
+
