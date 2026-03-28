@@ -80,6 +80,13 @@ The result must be a ready-to-run package inside a chosen workspace folder (for 
 
 ---
 
+8. **Generation completion logging rule**
+- After running generation from the `Generate` button, the pipeline must write explicit debug logs to Unity Console.
+- Logs must include a final completion message indicating generation finished successfully.
+- Logs must include the names (and preferably asset paths) of prefabs created or updated during the run.
+- If generation fails, log an error with the failing prefab/stage when identifiable.
+`r`n---
+
 ## Target output structure (template)
 
 Use this pattern under `<WORKSPACE_ROOT>`:

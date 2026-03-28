@@ -160,6 +160,32 @@ LowestVisualBase
 
 If several independent things stand on the same base, they should be siblings under that base, not children of each other.
 
+
+### Shadow separation rule
+
+When analyzing shadows, the default assumption must be:
+
+- in most cases, the shadow is **part of the sprite of the element that casts it**,
+- the shadow should **not** be split into a separate hierarchy node unless there is strong visual evidence that it is a distinct element.
+
+A shadow may be treated as a **separate element** only if it can be identified unambiguously, which usually requires a **clear visual gap** between:
+- the shadow shape, and
+- the sprite/body that casts it.
+
+If such a gap or separation is **not** clearly visible:
+- keep the shadow inside the same element as the casting sprite,
+- do not create a separate `...Shadow` node,
+- expand the element's recorded visual rectangle so that its `Size` includes the shadow area.
+
+Consequences:
+- the visible bounds of the element must include both the main body and its inseparable shadow,
+- the stored `Size` for that element must therefore be enlarged to cover the shadow,
+- if anchors are confirmed, anchor/offset analysis must use the enlarged visible rectangle,
+- if anchors are not confirmed, the stored `Position` must be the center of the enlarged visible rectangle.
+
+Only separate the shadow into its own node when the separation is visually reliable enough that moving the shadow independently would make sense as a structural interpretation.
+
+
 ### 3) Use correct transform type
 
 - For **UI** nodes use `RectTransform`.
@@ -222,6 +248,10 @@ Extract prefabs **starting from leaves and moving upward**.
 
 Rules:
 - Do **not** change the internal subtree structure when extracting a prefab.
+- In the **Final structure** section, do **not** collapse or remove concrete screen instances just because a prefab was extracted for them.
+- Keep those concrete nodes fully expanded in the Final structure and append a replacement marker at the end of each prefab-backed node line:
+  - `<<ReplaceWithPrefab: PrefabType>>`
+- The marker means the concrete subtree is represented in-screen but should be instantiated/replaced by the named nested prefab in production assembly.
 - Do **not** place bare `PrefabType()` or `List<PrefabType>()` directly as child nodes in a composed higher-level tree.
 - For a repeated prefab group, create a wrapper node named `<PrefabType>List` at the point where `List<PrefabType>()` would otherwise appear.
 - `<PrefabType>List` must have the correct transform component for that branch:
@@ -294,6 +324,9 @@ Rules:
   - Example: prefer `TextMeshProUGUI` over `RectTransform` for a text field.
 - Use meaningful field-name suffixes such as `Img`, `Tmp`, `Btn`, `Cg`, `Sr`, etc.
 - If a script contains child scripts that are logical parts of it, list those **last** in the script signature.
+- If a node is intended to be replaced by an extracted nested prefab, keep the node in the Final structure and append:
+  - `<<ReplaceWithPrefab: PrefabType>>`
+- This marker is mandatory for prefab-backed nodes and must not replace `()` / `{...}` / `[]`; it is an additional suffix.
 
 ### Section B — Prefab list
 
@@ -337,6 +370,8 @@ From the screenshot, build an initial hierarchical breakdown that:
 - keeps independent branches independent,
 - avoids flattening multi-layer elements,
 - estimates visible element sizes at reference resolution,
+- treats inseparable shadows as part of the casting element's visible bounds,
+- separates shadows into dedicated nodes only when the separation is visually unambiguous,
 - detects probable stretch/anchor behavior where the evidence is strong,
 - records fixed center positions for visible elements that do not yet have confirmed anchors.
 
@@ -447,6 +482,9 @@ Identify reusable and composition prefabs starting from the leafiest valid reusa
 Rules:
 - Do not mutate the subtree structure when extracting a prefab.
 - For repeated entities, remove numbering/index fragments such as `_01_`, `_02_`, etc. from the prefab root name and from all nested node names inside that prefab subtree.
+- In the Final structure output, do not collapse concrete screen instances into a single prefab placeholder.
+- Keep concrete instances in place and mark each prefab-backed node with:
+  - `<<ReplaceWithPrefab: PrefabType>>`
 - In higher-level composed trees, do not insert bare `PrefabType()` or `List<PrefabType>()` nodes.
 - For repeated nested prefab instances, create `<PrefabType>List (Transform/RectTransform)` at the hierarchy point where the repeated prefab group belongs.
 - For a single nested prefab instance, create `<PrefabType>Parent (Transform/RectTransform)` at the hierarchy point where the single prefab belongs.
@@ -462,6 +500,8 @@ Before presenting the final result, verify all of the following:
 - Draw order is correct.
 - Lower visual bases move their upper dependent layers.
 - Independent branches are not incorrectly chained.
+- Inseparable shadows are kept inside the casting element bounds.
+- Separate shadow nodes exist only when visual separation is unambiguous.
 - UI uses `RectTransform`.
 - World elements use `Transform`.
 - Text uses `TextMeshProUGUI`.
@@ -469,6 +509,7 @@ Before presenting the final result, verify all of the following:
 - No deep reference jumping.
 - Repeated references are grouped into `List<Type>{ ... }`.
 - Prefabs are extracted bottom-up.
+- Final structure keeps concrete prefab-backed instances expanded and marks them with `<<ReplaceWithPrefab: PrefabType>>`.
 - Higher composed trees use `<PrefabType>Parent` / `<PrefabType>List` wrapper nodes instead of bare prefab placeholders.
 - Parent scripts serialize wrapper transforms immediately before prefab or prefab-list fields.
 - Visible nodes include size info at reference resolution.
@@ -477,126 +518,3 @@ Before presenting the final result, verify all of the following:
 
 - Anchor/stretch confirmation items include the exact single structure line for each element being confirmed.
 - Cleanup candidates include the exact single structure line for each element being reviewed.
-
-
----
-
-## Master prompt for the AI agent
-
-Use the following as the **single initial prompt** for the AI agent.
-
-```text
-Before doing anything else, read the attached `.md` specification file completely and treat it as the authoritative workflow for this task. If this prompt is shorter than the `.md`, the `.md` wins.
-
-You are analyzing a game screenshot and must produce a Unity-oriented final breakdown of the screen.
-
-Your goal is to build:
-1. a final hierarchical screen structure,
-2. Unity components for every node,
-3. custom scripts and serialized fields only where they are genuinely useful,
-4. a dialog cleanup stage for excluding unnecessary scripts/references,
-5. a final prefab list extracted bottom-up from leaves to root.
-
-Follow these rules strictly:
-
-A. Hierarchy and layering
-- Preserve visual draw order.
-- In every parent, order children from back to front.
-- Preserve hierarchical movement logic.
-- If a lower visual layer is moved, all visually dependent upper layers must move with it.
-- If several independent elements stand on the same base, they must be siblings under that base, not chained through one another.
-
-B. Unity component rules
-- Use RectTransform for UI nodes.
-- Use Transform for in-game/world nodes.
-- Use TextMeshProUGUI for text.
-- Use Image for UI visuals.
-- Use Button only on actual interactive UI elements.
-- Use Mask only where clipping is clearly needed.
-- Use SpriteRenderer for world visuals.
-- Use SortingGroup on multi-part world objects that should sort as a unit.
-
-C. Script rules
-- Add custom scripts only where meaningful.
-- Avoid scripts on purely decorative or static elements unless there is a clear runtime need.
-- A script may reference only its immediate useful visual children and immediate child scripts.
-- Do not jump across hierarchy levels.
-- If a child script exists as the logical boundary, reference that script instead of deeper visuals.
-
-D. Script signature format
-For any scripted node, use:
-[ScriptName {Type : fieldName, Type : fieldName, ...}]
-- Prefer the most specific type.
-- Use meaningful suffixes like Img, Tmp, Btn, Cg, Sr, Rt, Tr.
-- If the node has child scripts that are its logical parts, list those child scripts last.
-
-E. Repeated references
-If a parent has several references of the same type, group them as:
-List<Type>{ item1, item2, item3 }
-
-F. Mandatory cleanup dialog stage
-Before locking the final structure, produce a concise numbered list of candidate unnecessary entities.
-The list must be in this format:
-1 : ElementName / ElementName : scripts
-2 : ElementName : script
-3 : Shadow-elements : references
-4 : Mask-elements : references
-Group same-meaning candidates together.
-Wait for the user to mark what to keep/remove.
-
-After the user answers:
-- remove unwanted scripts/references,
-- keep the selected ones,
-- reattach any surviving child scripts to the nearest surviving parent script,
-- keep draw order and hierarchy intact,
-- keep movement logic intact.
-
-G. Final structure output format
-Output the final screen tree using:
-NodeName (Component1, Component2, ...) [ScriptName {Type : fieldName, ...}]
-Include () for every node.
-Include [] only where a script exists.
-
-H. Prefab extraction and composed-tree rules
-After finalizing the cleaned structure, extract prefabs bottom-up from leaves to root.
-- Do not change subtree structure when extracting a prefab.
-- If the prefab comes from a repeated entity subtree, remove numbering/index fragments such as `_01_`, `_02_`, etc. from the prefab root name and all nested node names inside that prefab subtree.
-- Do not place bare `PrefabType()` or `List<PrefabType>()` directly as child nodes in a composed tree.
-- For a repeated prefab group, create a wrapper node named `<PrefabType>List` at the point where `List<PrefabType>()` would otherwise appear.
-- `<PrefabType>List` must have the correct transform component for that branch: `RectTransform` for UI, `Transform` for world.
-- In the nearest parent script, add two adjacent serialized fields for that repeated prefab group in this order:
-  1. the wrapper transform field using the matching transform type,
-  2. the prefab list field of type `List<PrefabType>`.
-- For a single nested prefab instance, create a wrapper node named `<PrefabType>Parent` at the point where `PrefabType()` would otherwise appear.
-- `<PrefabType>Parent` must have the correct transform component for that branch: `RectTransform` for UI, `Transform` for world.
-- In the nearest parent script, add two adjacent serialized fields for that single nested prefab in this order:
-  1. the wrapper transform field using the matching transform type,
-  2. the prefab field of type `PrefabType`.
-- The wrapper node itself normally carries only the transform component unless the source subtree requires more.
-- Output prefab descriptions from leaves to root.
-
-Examples:
-- repeated: `PortalPrefabList (Transform)` with parent-script fields `Transform : portalPrefabListTr, List<PortalPrefab> : portalPrefabs`
-- single: `TotemPrefabParent (Transform)` with parent-script fields `Transform : totemPrefabParentTr, TotemPrefab : totemPrefab`
-
-I. Final answer structure
-Return:
-1. Final structure
-2. Prefab list
-
-Now analyze the provided screenshot and start with:
-Step 1: initial structure with components and candidate scripts.
-Step 2: candidate cleanup list for user review.
-Do not skip the cleanup dialog stage.
-```
-
----
-
-## Suggested user instruction wrapper
-
-If you want to use the master prompt in a real run, prepend a short instruction like this:
-
-```text
-Use the screenshot I attached. Follow the workflow exactly. Do not skip the cleanup dialog stage. After I answer the cleanup list, continue to the final structure and prefab list.
-```
-

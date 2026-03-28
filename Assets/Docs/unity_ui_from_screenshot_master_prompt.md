@@ -40,6 +40,15 @@ A2. Anchor, stretch, offset, and position analysis
 - If an element does not have confirmed parent-side anchors in the final result, store its fixed position as the center of the rectangle it occupies in the chosen reference resolution.
 - For visible elements, include size information in reference-resolution pixels.
 
+
+A3. Shadow separation rule
+- By default, treat a shadow as part of the sprite of the element that casts it.
+- Create a separate shadow node only when the shadow can be identified unambiguously as a distinct element, usually because there is a clear visual gap between the shadow and the casting sprite/body.
+- If the shadow is not unambiguously separate, keep it inside the same element as the casting sprite.
+- In that case, enlarge the element's visual bounds so that its stored Size includes the shadow area.
+- If anchors are confirmed, anchor/offset analysis must use the enlarged visible rectangle.
+- If anchors are not confirmed, Position must be the center of that enlarged visible rectangle.
+
 B. Attached text rule
 - If text visually labels a graphic element, icon, reward, badge, button artwork, or similar graphic entity, make that text a child of the graphic element it belongs to.
 - This remains true even if the text is slightly shifted down, up, or overlapping the graphic.
@@ -133,6 +142,10 @@ For visible nodes, include size information at the reference resolution.
 If anchors are confirmed, include the confirmed anchors and offsets, plus fixed axis size when relevant.
 If anchors are not confirmed, include the fixed center position in reference-resolution pixels.
 Purely logical wrapper nodes may omit the metadata block.
+
+Shadow-specific output rule:
+- if a shadow is inseparable from the main body, represent it implicitly through the element's enlarged size/position metadata instead of a separate node,
+- create a separate shadow node only when visual separation is clear.
 Include [] only where a script exists.
 
 K. Prefab extraction and composed-tree rules
