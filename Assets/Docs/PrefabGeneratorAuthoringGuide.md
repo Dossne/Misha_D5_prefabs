@@ -87,6 +87,16 @@ The result must be a ready-to-run package inside a chosen workspace folder (for 
 - If generation fails, log an error with the failing prefab/stage when identifiable.
 `r`n---
 
+9. **Prefab and sprite serialization + post-update rule**
+- The generator runtime profile (`ScriptableObject`) must declare serialized prefab fields for every prefab that the generation pipeline creates.
+- For each serialized generated-prefab field, the profile must also declare serialized sprite fields for every native `UnityEngine.UI.Image` component that belongs to that prefab structure, excluding images that belong to nested prefab instances.
+- After `Generate`, all created/updated prefabs must be assigned into their corresponding serialized prefab fields in the generator profile asset, and the asset must be saved.
+- The generator profile custom inspector must provide a `SetSprites` button.
+- `SetSprites` must update generated prefabs by assigning `Image.sprite` values from the corresponding serialized sprite fields, but only where the user has provided sprite values before pressing `SetSprites`.
+- `SetSprites` must not overwrite `Image.sprite` with `null` when the corresponding serialized sprite field is empty.
+
+---
+
 ## Target output structure (template)
 
 Use this pattern under `<WORKSPACE_ROOT>`:
